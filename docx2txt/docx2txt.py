@@ -2,6 +2,7 @@
 
 import argparse
 import re
+from typing import List, Literal, Union, cast, overload
 import xml.etree.ElementTree as ET
 import zipfile
 import os
@@ -16,6 +17,8 @@ def process_args():
                                                  'to extract text and images '
                                                  'from docx files.')
     parser.add_argument("docx", help="path of the docx file")
+    parser.add_argument('-s', '--split_pages',
+                        help='Split text on page breaks')
     parser.add_argument('-i', '--img_dir', help='path of directory '
                                                 'to extract images')
 
@@ -47,7 +50,15 @@ def qn(tag):
     return '{{{}}}{}'.format(uri, tagroot)
 
 
-def xml2text(xml):
+@overload
+def xml2text(xml, split_pages: Literal[True]) -> List[str]: ...
+
+
+@overload
+def xml2text(xml, split_pages: Literal[False]) -> str: ...
+
+
+def xml2text(xml, split_pages: bool):
     """
     A string representing the textual content of this run, with content
     child elements like ``<w:tab/>`` translated to their Python
@@ -55,6 +66,8 @@ def xml2text(xml):
     Adapted from: https://github.com/python-openxml/python-docx/
     """
     text = u''
+    texts = []
+
     root = ET.fromstring(xml)
     for child in root.iter():
         if child.tag == qn('w:t'):
@@ -62,15 +75,36 @@ def xml2text(xml):
             text += t_text if t_text is not None else ''
         elif child.tag == qn('w:tab'):
             text += '\t'
+        elif split_pages and child.tag == qn('w:br') and list(child.attrib.values())[0] == "page":
+            texts.append(text)
+            text = u''
         elif child.tag in (qn('w:br'), qn('w:cr')):
             text += '\n'
         elif child.tag == qn("w:p"):
             text += '\n\n'
-    return text
+    return texts if split_pages else text
 
 
-def process(docx, img_dir=None):
-    text = u''
+def strip_list(lst: list):
+    while lst and not lst[-1]:
+        lst.pop()
+
+    while lst and not lst[0]:
+        lst.pop(0)
+
+    return lst
+
+
+@overload
+def process(docx, split_pages: Literal[True], img_dir=None) -> List[str]: ...
+
+
+@overload
+def process(docx, split_pages: Literal[False], img_dir=None) -> str: ...
+
+
+def process(docx, split_pages=False, img_dir=None):
+    text: Union[list[str], str] = [] if split_pages else ""
 
     # unzip the docx in memory
     zipf = zipfile.ZipFile(docx)
@@ -81,18 +115,33 @@ def process(docx, img_dir=None):
     header_xmls = 'word/header[0-9]*.xml'
     for fname in filelist:
         if re.match(header_xmls, fname):
-            text += xml2text(zipf.read(fname))
+            if split_pages:
+                text = cast(list[str], text)
+                text.extend(xml2text(zipf.read(fname), split_pages))
+            else:
+                text = cast(str, text)
+                text += xml2text(zipf.read(fname), split_pages)
 
     # get main text
     doc_xml = 'word/document.xml'
-    text += xml2text(zipf.read(doc_xml))
+    if split_pages:
+        text = cast(list[str], text)
+        text.extend(xml2text(zipf.read(doc_xml), split_pages))
+    else:
+        text = cast(str, text)
+        text += xml2text(zipf.read(doc_xml), split_pages)
 
     # get footer text
     # there can be 3 footer files in the zip
     footer_xmls = 'word/footer[0-9]*.xml'
     for fname in filelist:
         if re.match(footer_xmls, fname):
-            text += xml2text(zipf.read(fname))
+            if split_pages:
+                text = cast(list[str], text)
+                text.extend(xml2text(zipf.read(fname), split_pages))
+            else:
+                text = cast(str, text)
+                text += xml2text(zipf.read(fname), split_pages)
 
     if img_dir is not None:
         # extract images
@@ -104,10 +153,10 @@ def process(docx, img_dir=None):
                     dst_f.write(zipf.read(fname))
 
     zipf.close()
-    return text.strip()
+    return [t.strip() for t in strip_list(cast(list[str], text))] if split_pages else cast(str, text).strip()
 
 
 if __name__ == '__main__':
     args = process_args()
-    text = process(args.docx, args.img_dir)
+    text = process(args.docx, args.split_pages, args.img_dir)
     sys.stdout.write(text.encode('utf-8'))

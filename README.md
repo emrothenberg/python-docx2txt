@@ -17,6 +17,8 @@ a. From command line:
 docx2txt file.docx
 # extract text and images
 docx2txt -i /tmp/img_dir file.docx
+# extract text and split on page breaks
+docx2txt -s file.docx
 ```
 b. From python:
 ```python
@@ -26,5 +28,7 @@ import docx2txt
 text = docx2txt.process("file.docx")
 
 # extract text and write images in /tmp/img_dir
-text = docx2txt.process("file.docx", "/tmp/img_dir") 
+text = docx2txt.process("file.docx", img_dir="/tmp/img_dir") 
+# extract text, split on page breaks, and write images in /tmp/img_dir
+text = docx2txt.process("file.docx", split_pages=True, img_dir="/tmp/img_dir") 
 ```
